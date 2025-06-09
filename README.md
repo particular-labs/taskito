@@ -1,6 +1,6 @@
 # 🎯 Taskito
 
-**A tiny task master** - Lightweight MCP (Model Context Protocol) server for task management with dependency tracking and beautiful markdown output.
+**A tiny task assistant** - Lightweight MCP (Model Context Protocol) server for task management with dependency tracking and beautiful markdown output.
 
 ## ✨ Features
 
