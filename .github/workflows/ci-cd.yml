@@ -1,0 +1,215 @@
+name: 🚀 CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # Test and build on every push/PR
+  test:
+    name: 🧪 Test & Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: 📥 Install dependencies
+      run: npm ci
+      
+    - name: 🧪 Run tests
+      run: npm test
+      
+    - name: 🔨 Build project
+      run: npm run build
+      
+    - name: 📦 Check package contents
+      run: npm pack --dry-run
+
+  # Auto-release when version in package.json changes on main
+  auto-release:
+    name: 📦 Auto Release
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Get full history to compare versions
+        
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        
+    - name: 📥 Install dependencies
+      run: npm ci
+      
+    - name: 🔨 Build project
+      run: npm run build
+      
+    - name: 🔍 Check if version changed
+      id: version-check
+      run: |
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        
+        # Check if this version exists on npm
+        if npm view @particular-labs/taskito@$CURRENT_VERSION version 2>/dev/null; then
+          echo "version-exists=true" >> $GITHUB_OUTPUT
+          echo "Version $CURRENT_VERSION already exists on npm"
+        else
+          echo "version-exists=false" >> $GITHUB_OUTPUT
+          echo "New version $CURRENT_VERSION detected!"
+        fi
+        
+    - name: 📤 Publish to npm
+      if: steps.version-check.outputs.version-exists == 'false'
+      run: |
+        echo "Publishing version ${{ steps.version-check.outputs.current-version }} to npm..."
+        
+        # Determine if it's a beta release
+        if [[ "${{ steps.version-check.outputs.current-version }}" == *"beta"* ]]; then
+          npm publish --tag beta
+          echo "Published as beta release"
+        else
+          npm publish
+          echo "Published as stable release"
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        
+    - name: 🏷️ Create Git Tag
+      if: steps.version-check.outputs.version-exists == 'false'
+      run: |
+        VERSION="v${{ steps.version-check.outputs.current-version }}"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Create and push tag
+        git tag $VERSION
+        git push origin $VERSION
+        echo "Created and pushed tag: $VERSION"
+        
+    - name: 📝 Create GitHub Release
+      if: steps.version-check.outputs.version-exists == 'false'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version-check.outputs.current-version }}
+        release_name: 🎯 Taskito v${{ steps.version-check.outputs.current-version }}
+        body: |
+          ## 🎯 Taskito v${{ steps.version-check.outputs.current-version }}
+          
+          ### 📦 Installation
+          ```bash
+          npm install -g @particular-labs/taskito@${{ steps.version-check.outputs.current-version }}
+          ```
+          
+          ### 🚀 Quick Start
+          1. **Install globally:** `npm install -g @particular-labs/taskito`
+          2. **Configure MCP client:** `{"mcpServers": {"taskito": {"command": "taskito"}}}`
+          3. **Start using:** Navigate to any project and run: `Initialize project "My App"`
+          
+          ### 📋 What's New
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for detailed changes.
+          
+          ### 🎯 Task Sizing Guide
+          - **XS** 🟢 < 1 hour (quick fixes)
+          - **S** 🔵 1-4 hours (small features)  
+          - **M** 🟡 4-8 hours (medium features)
+          - **L** 🟠 1-2 days (large features)
+          - **XL** 🔴 2+ days (major features)
+          
+          ### 🔗 Links
+          - 📚 [Documentation](https://github.com/${{ github.repository }}#readme)
+          - 🐛 [Report Issues](https://github.com/${{ github.repository }}/issues)
+          - 📈 [NPM Package](https://www.npmjs.com/package/@particular-labs/taskito)
+          
+          Happy task management! 🎯✨
+        draft: false
+        prerelease: ${{ contains(steps.version-check.outputs.current-version, 'beta') }}
+
+  # Manual release workflow for tagged releases
+  tagged-release:
+    name: 🏷️ Tagged Release  
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        
+    - name: 📥 Install dependencies
+      run: npm ci
+      
+    - name: 🔨 Build project
+      run: npm run build
+      
+    - name: 🔍 Extract version from tag
+      id: get-version
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/v}
+        PACKAGE_VERSION=$(node -p "require('./package.json').version")
+        echo "tag-version=$TAG_VERSION" >> $GITHUB_OUTPUT
+        echo "package-version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+        
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "❌ Tag version ($TAG_VERSION) doesn't match package.json version ($PACKAGE_VERSION)"
+          exit 1
+        fi
+        
+    - name: 📤 Publish to npm
+      run: |
+        if [[ "${{ steps.get-version.outputs.tag-version }}" == *"beta"* ]]; then
+          npm publish --tag beta
+          echo "Published v${{ steps.get-version.outputs.tag-version }} as beta"
+        else
+          npm publish
+          echo "Published v${{ steps.get-version.outputs.tag-version }} as stable"
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        
+    - name: 📝 Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: 🎯 Taskito ${{ github.ref }}
+        body: |
+          ## 🎯 Taskito ${{ github.ref }}
+          
+          Released via manual tag creation.
+          
+          ### 📦 Installation
+          ```bash
+          npm install -g @particular-labs/taskito@${{ steps.get-version.outputs.tag-version }}
+          ```
+          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+        draft: false
+        prerelease: ${{ contains(steps.get-version.outputs.tag-version, 'beta') }}

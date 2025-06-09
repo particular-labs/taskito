@@ -1,0 +1,7 @@
+{
+    "mcpServers": {
+      "taskito": {
+        "command": "taskito"
+      }
+    }
+  }
